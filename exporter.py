@@ -11,7 +11,7 @@ load_dotenv()
 
 SPREAD_SHEET_ID = os.getenv('SPREAD_SHEET_ID')
 SHEET_NAME = os.getenv('SHEET_NAME')
-range = "A2:G30"
+range = "A2:G400"
 
 SCOPES = ['https://www.googleapis.com/auth/drive']
 CREDENTIALS_FILE =  "credentials.json"
@@ -51,25 +51,27 @@ def recursive_download_folder(folder_id, product_id):
         print('No files found.')
     else:
         for item in items:
-            print(f"File Name: {item['name']}, File ID: {item['id']}, Mime Type: {item['mimeType']}")
             if item['mimeType'] == 'application/vnd.google-apps.folder':
                 recursive_download_folder(item['id'], product_id)
             else:
                 request = drive_service.files().get_media(fileId=item['id'])
                 fh = io.BytesIO()
-                downloader = MediaIoBaseDownload(fh, request)
-                done = False
-                while done is False:
-                    status, done = downloader.next_chunk()
-                file_content = fh.getvalue()
-                binary_content = psycopg2.Binary(file_content)
-                item['name']=item['name'].replace("'", "")
                 with conn.cursor() as cursor:
-                    cursor.execute(f"INSERT INTO product_images (product_id, content, filename) VALUES ({product_id}, {binary_content}, '{item['name']}')")
+                    cursor.execute(f"SELECT google_id FROM product_images WHERE google_id = '{item['id']}'")
+                    if cursor.fetchone() is None:
+                        downloader = MediaIoBaseDownload(fh, request)
+                        print(f"\tDownloading {item['id']}")
+                        done = False
+                        while done is False:
+                            status, done = downloader.next_chunk()
+                        file_content = fh.getvalue()
+                        binary_content = psycopg2.Binary(file_content)
+                        item['name']=item['name'].replace("'", "")
+                        with conn.cursor() as cursor:
+                            cursor.execute(f"INSERT INTO product_images (product_id, content, filename, google_id) VALUES ({product_id}, {binary_content}, '{item['name']}', '{item['id']}')")
 
 
 for product in sheet["valueRanges"][0]['values']:
-    print(len(product), product)
     if(len(product)<6):
         continue
     
@@ -81,12 +83,17 @@ for product in sheet["valueRanges"][0]['values']:
     donor_site = ''
     
     folder_id = product[4].split("/")[-1].split("?")[0]
-    print("Folder ID:", folder_id)
-    
     if len(product)==7:
         donor_site = product[6]
     with conn.cursor() as cursor:
-        cursor.execute(f"INSERT INTO products (lo, type, name, description, price, availability, donor_site) VALUES \
-                    ('{Lo}', '{product_type}', '{name}', '{name}', {price}, '{availability}','{donor_site}') RETURNING id")
+        cursor.execute(f"SELECT id FROM products WHERE lo = '{Lo}' AND type = '{product_type}' AND name = '{name}'")
+        existing_product = cursor.fetchone()
+        if existing_product is None:
+            cursor.execute(f"INSERT INTO products (lo, type, name, description, price, availability, donor_site) VALUES \
+                        ('{Lo}', '{product_type}', '{name}', '{name}', {price}, '{availability}','{donor_site}') RETURNING id")
+        else:
+            cursor.execute(f"UPDATE products SET availability = '{availability}' WHERE id = {existing_product[0]} RETURNING id")
+            print(f"Updating avialibility for {name}")
+       
         product_id = cursor.fetchone()[0]
         recursive_download_folder(folder_id, product_id)
