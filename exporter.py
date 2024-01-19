@@ -43,16 +43,18 @@ conn = get_connection()
 
 
 
-def recursive_download_folder(folder_id, product_id):
+def recursive_download_folder(folder_id, product_id, name):
+    if not folder_id:
+        return
     results = drive_service.files().list(pageSize=100, q=f"'{folder_id}' in parents", fields="nextPageToken, files(id, name, mimeType)").execute()
     items = results.get('files', [])
-
+    
     if not items:
-        print('No files found.')
+        print(f'\t\tNo files found. {name}')
     else:
         for item in items:
             if item['mimeType'] == 'application/vnd.google-apps.folder':
-                recursive_download_folder(item['id'], product_id)
+                recursive_download_folder(item['id'], product_id, name)
             else:
                 request = drive_service.files().get_media(fileId=item['id'])
                 fh = io.BytesIO()
@@ -60,7 +62,7 @@ def recursive_download_folder(folder_id, product_id):
                     cursor.execute(f"SELECT google_id FROM product_images WHERE google_id = '{item['id']}'")
                     if cursor.fetchone() is None:
                         downloader = MediaIoBaseDownload(fh, request)
-                        print(f"\tDownloading {item['id']}")
+                        print(f"\tDownloading {item['id']} for {name}")
                         done = False
                         while done is False:
                             status, done = downloader.next_chunk()
@@ -93,7 +95,7 @@ for product in sheet["valueRanges"][0]['values']:
                         ('{Lo}', '{product_type}', '{name}', '{name}', {price}, '{availability}','{donor_site}') RETURNING id")
         else:
             cursor.execute(f"UPDATE products SET availability = '{availability}' WHERE id = {existing_product[0]} RETURNING id")
-            print(f"Updating avialibility for {name}")
+            # print(f"Updating avialibility for {name}")
        
         product_id = cursor.fetchone()[0]
-        recursive_download_folder(folder_id, product_id)
+        recursive_download_folder(folder_id, product_id, name)
